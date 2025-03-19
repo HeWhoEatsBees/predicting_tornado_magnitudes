@@ -1,0 +1,279 @@
+---
+title: "Predicting Tornado Magnitudes: A Machine Learning Approach with NOAA Data"
+subtitle: "Geospatial Analysis of Tornadoes"
+author: "Ethan Saline"
+format:
+  html:
+  execute:
+      enable: true  # Ensures Python execution
+    self-contained: true
+    page-layout: full
+    title-block-banner: true
+    toc: true
+    toc-depth: 3
+    toc-location: body
+    number-sections: false
+    html-math-method: katex
+    code-fold: true
+    code-summary: "Show the code"
+    code-overflow: wrap
+    code-copy: hover
+    code-tools:
+        source: false
+        toggle: true
+        caption: See code
+execute: 
+  warning: false
+    
+---
+
+## Introduction
+Tornadoes are among the most destructive and unpredictable natural disasters, capable of causing immense damage and loss of life. Fortunately, the National Oceanic and Atmospheric Administration (NOAA) has compiled a comprehensive database of tornado occurrences for analysis.
+
+In this project, we will analyze tornado data, following the tutorial below as a foundation for initial graphing of our data we will then train an ML Model to predict the magnitude of new tornados based on NOAA data
+
+```{python}
+#https://towardsdatascience.com/analyze-tornado-data-with-python-and-geopandas-591d5e559bb4/
+```
+
+
+
+## Import the libraries 
+```{python}
+#Import The Libraries
+import calendar
+import numpy as np
+import matplotlib.pyplot as plt
+import pandas as pd
+import geopandas as gpd
+import panel as pn
+from shapely.geometry import Point, box
+from pygris import states, counties
+```
+
+
+## Create the data frame and initial cleaning
+We're going to filter out the noncontinental US states (Alaska, Hawaii, Puerto Rico, and Virgin Islands) as well as map our data to a GeoDataFrame
+```{python}
+#Create the Data Frame
+
+#Load the data
+df_raw = pd.read_csv('https://bit.ly/40xJCMK')
+
+#Filter out Alaska, Hawaii, Puerto Rico, and Virgin Islands:
+df = df_raw[~df_raw['st'].isin(['AK', 'HI', 'PR', 'VI'])]    
+
+#Create a GeoDataFrame for the data points
+geometry = gpd.array.from_shapely([Point(xy) for xy in zip(df['slon'], df['slat'])])  
+#slat = latitude  slong = longitude, we are shaping the lat and lon to a cordinate grid
+
+g_df = gpd.GeoDataFrame(df, geometry=geometry, crs="EPSG:4326")    
+#crs is how it knows how to put onto a map
+```
+
+
+## Continue cleaning the data by filtering out tornados with unknown magnitudes
+Having unknown magnitudes usually means that the tornados were very small or otherwise inconsequential. We also cannot have use them to train our model.
+```{python}
+# Count the number of occurrences of non reported mag before taking them out (-9 is non reported)
+num_negative_nines = (g_df['mag'] == -9).sum()
+
+# Filter the unknown mags (-9)
+g_df = g_df[(g_df['mag'] != -9)]
+
+print(f"We have cut {num_negative_nines} tornados that don't have recorded magnitudes.")
+```
+
+
+## Get to know the data
+We are looking at the column names to get a better idea of what we are working with and what kind of features will be possible for our model. We are also going to look at the oldest and newest years for which we have data.
+```{python}
+#Show columns
+print(g_df.columns.values)
+
+#See header
+g_df.head()
+
+#See the range of years
+max = g_df['yr'].max()
+min = g_df['yr'].min()
+
+print(f"\nThe years for which we have data are between {min} and {max}")
+```
+
+EXPLAIN THE COLUMN NAMES HERE
+
+
+## Load the state and county borders from the U.S. census
+Here we are using U.S. Cenus data to map out our data onto a good looking map. This will let us see the information visually and help in further analysis
+```{python}
+#Load the U.S. census state boundaries using pygris:
+states_df = states(year=2020)  
+states_g_df = gpd.GeoDataFrame(states_df)
+
+#Load the U.S. census county boundaries using pygris:
+counties_df = counties(year=2020)  
+counties_g_df = gpd.GeoDataFrame(counties_df)
+
+#Filter out the parts of the U.S. we took out earlier
+states_g_df = states_g_df[~states_g_df['STUSPS'].isin(['AK', 'HI', 'PR', 'VI'])]
+counties_g_df = counties_g_df[~counties_g_df['STATEFP'].isin(
+    ['02', '15', '72', '78'])]  # FIPS state codes for AK, HI, PR, VI
+
+#Create a bounding box for the specified map bounds:
+bounds_box = box(-127, 23, -67, 50)  
+#               (min_lon, min_lat, max_lon, max_lat)
+
+# Clip the GeoDataFrames to the bounding box:
+clipped_states = gpd.clip(states_g_df, bounds_box)
+clipped_counties = gpd.clip(counties_g_df, bounds_box)
+```
+
+
+## Plotting the Map
+Now we can plot our data onto the map of the U.S.
+```{python}
+
+#Plot the data:
+fig, ax = plt.subplots(1, 1, figsize=(15, 12))
+
+#Plot the borders:
+clipped_counties.plot(ax=ax, 
+                      color='none', 
+                      edgecolor='grey', 
+                      linewidth=0.5)
+
+clipped_states.plot(ax=ax, 
+                    color='none', 
+                    edgecolor='blue',
+                    linewidth=1)
+
+#Plot the tornado locations
+g_df.plot(ax=ax, 
+        color='darkred', 
+        marker='.', 
+        markersize=1, 
+        alpha=0.5,
+        label='Where Tornado Started')
+
+plt.title('Reported Tornadoes with Known Magnitude 1950-2023 (NOAA)', 
+          fontsize=20)
+plt.xlabel('Longitude', fontsize=15)
+plt.ylabel('Latitude', fontsize=15)
+plt.legend()
+
+plt.show()
+```
+
+This map has way too much going on to see anything, so lets limit it to a single year
+
+## Tornados of 2023
+Lets plot only the tornados from the year 2023
+```{python}
+#2023 tornadoes with county boundaries
+
+#Plot the 2023 data:
+fig, ax = plt.subplots(1, 1, figsize=(15, 12))
+clipped_counties.plot(ax=ax, 
+                      color='none', 
+                      edgecolor='gainsboro', 
+                      linewidth=0.5)
+
+clipped_states.plot(ax=ax, 
+                    color='none', 
+                    edgecolor='dimgrey', 
+                    linewidth=1)
+
+g_df[(g_df['yr'] == 2023)].plot(ax=ax, 
+              color='maroon', 
+              marker='v', 
+              markersize=14, 
+              label='Tornado Start Location')
+
+plt.title('Reported Tornadoes with Known Magnitude 2023 (NOAA)', 
+          fontsize=20)
+plt.xlabel('Longitude', fontsize=15)
+plt.ylabel('Latitude', fontsize=15)
+plt.legend()
+
+plt.show()
+
+```
+
+
+## Mapping different magnitudes with different colors
+To further enhance our 2023 map, lets differentiate the data based on the Magnitude of the tornados using blue to indicate the tornados of Magnitude 2 or above (the worse one) and red to indicate the smaller ones
+```{python}
+# Plot EF0-1 and EF2-5 tornadoes separately:
+
+#I have made this into a function to avoid rewriting the same code again for other years
+def plot_year(year):
+  # Plot tornadoes with dynamic coloring and z-order:
+  fig, ax = plt.subplots(1, 1, figsize=(15, 12))
+
+  # Plot counties and states:
+  clipped_counties.plot(ax=ax, 
+                      color='none', 
+                      edgecolor='gainsboro', 
+                      linewidth=0.5, 
+                      zorder=1)
+
+  clipped_states.plot(ax=ax, 
+                    color='none', 
+                    edgecolor='dimgrey', 
+                    linewidth=1, 
+                    zorder=2)
+
+  # Plot magnitude 2+ tornadoes (maroon) with a higher z-order (on top):
+  g_df[(g_df['yr'] == year)][g_df[(g_df['yr'] == year)]['mag'] >= 2].plot(ax=ax,
+  color='blue',
+  marker='v',
+  markersize=14,
+  zorder=4,
+  label='EF 2+')
+
+  g_df[(g_df['yr'] == year)][g_df[(g_df['yr'] == year)]['mag'] <= 1].plot(ax=ax,
+  color='red',
+  alpha=0.6,
+  marker='v',
+  markersize=14,
+  zorder=3,
+  label='EF 0-1')
+
+  # Add titles and labels:
+  plt.title(f'Tornadoes Reported in {year} by Magnitude (NOAA)', 
+          fontsize=20)
+  plt.xlabel('Longitude', fontsize=15)
+  plt.ylabel('Latitude', fontsize=15)
+
+  # Add legend with title:
+  plt.legend(loc='lower left', 
+          title="Tornado Starting Location", 
+          shadow=True, 
+          fancybox=True)
+
+  plt.show()
+
+#Plot out 2023
+plot_year(2023)
+```
+
+
+## Tornado map with year slider
+Please note that the slider does not work in the HTML file, only in the quarto interactive window
+```{python}
+# Enable panel for Jupyter/Quarto environments
+pn.extension()
+
+# Create an interactive slider for year selection
+year_slider = pn.widgets.IntSlider(name='Select Year', start=1950, end=2023, value=2023)
+
+# Define function to update plot based on user selection
+@pn.depends(year_slider)
+def update_plot(year):
+    plot_year(year)
+
+# Display the interactive slider and output
+pn.Column(year_slider, update_plot).servable()
+
+```
